@@ -17,7 +17,7 @@ use Log::Log4perl qw(:easy);
 use Try::Catch;
 use Data::Dumper;
 
-# ABSTRACT: Masscan::Scanner - A Perl module which helps in using the masscan port scanner.
+# ABSTRACT: A Perl module which helps in using the masscan port scanner.
 
 =head1 SYNOPSIS
 
@@ -32,14 +32,16 @@ use Data::Dumper;
     # Add extra hosts or ports
     $mas->add_host('10.0.0.1');
     $mas->add_host('10.0.0.0/24');
-
-    # Can add domains but will incur performance penalty hence IP(s) and CIDR(s) recommended.
-    $mas->add_host('averna.id.au');
-
     $mas->add_port(25);
+    $mas->add_port(110);
 
     # Can add port ranges too
     $mas->add_port('1024-2048');
+    $mas->add_port('3000-65535');
+
+    # Can add domains but will incur a performance penalty hence IP(s) and CIDR(s) recommended.
+    $mas->add_host('averna.id.au');
+    $mas->add_host('duckduckgo.com');
 
     # It is usually required that masscan is run as a privilaged user.
     # Obviously this module can be successfully run as the root user.
@@ -321,7 +323,7 @@ sub scan
 
     $self->_info('Attempting to run command');
     my $scan = $self->_run_cmd($cmd . " -oJ $fstore");
-    $self->_info(($scan->{success}) ? 'Command executed successfully.': 'Command has failed');
+    $self->_info(($scan->{success}) ? 'Command executed successfully.': "Command has failed: $scan->{stderr}");
 
     return ($scan->{success}) ? 1 : 0;
 }
