@@ -1,9 +1,11 @@
 package Masscan::Scanner;
 use strict;
 use warnings;
-use Moo;
-use MooX::Types::MooseLike::Base qw(:all);
-use namespace::clean;
+use Moose;
+use MooseX::AttributeShortcuts;
+use MooseX::StrictConstructor;
+use MooseX::Types::Moose qw(:all);
+use MooseX::Types::Structured qw(:all);
 use File::Spec;
 use File::Temp;
 use IPC::Open3;
@@ -12,10 +14,11 @@ use JSON;
 use Net::DNS;
 use Data::Validate::IP qw(is_ipv4 is_ipv6);
 use Data::Validate::Domain qw(is_domain);
-use Term::ANSIColor qw(:constants);
 use Log::Log4perl qw(:easy);
+use Log::Log4perl::Appender::ScreenColoredLevels::UsingMyColors;
 use Try::Catch;
 use Data::Dumper;
+use namespace::autoclean;
 
 # ABSTRACT: A Perl module which helps in using the masscan port scanner.
 
@@ -23,9 +26,9 @@ use Data::Dumper;
 
     use Masscan::Scanner;
 
-    my @hosts     = qw('::1', '127.0.0.1');
-    my @ports     = qw('22', '80', '443', '1-100');
-    my @arguments = qw('--banners');
+    my @hosts     = qw(::1 127.0.0.1);
+    my @ports     = qw(22 80 443 1-100);
+    my @arguments = qw(--banners);
 
     my $mas = Masscan::Scanner->new(hosts => \@hosts, ports => \@ports, arguments => \@arguments);
 
@@ -200,7 +203,7 @@ has binary =>
     is       => 'rw',
     isa      => Str,
     required => 0,
-    default  => sub{_find_binary()},
+    builder  => 1,
     lazy     => 1,
 );
 
@@ -209,7 +212,6 @@ has command_line =>
     is       => 'rw',
     isa      => Str,
     required => 0,
-    lazy     => 1,
 );
 
 has scan_results_file =>
@@ -217,7 +219,7 @@ has scan_results_file =>
     is       => 'rw',
     isa      => Str,
     required => 0,
-    default  => sub{_tmp_file()},
+    builder  => 1,
     lazy     => 1,
 );
 
@@ -237,12 +239,21 @@ has verbose =>
     default  => 0,
 );
 
+has logger =>
+(
+    is       => 'ro',
+    isa      => Object,
+    required => 0,
+    builder  => 1,
+    lazy     => 1,
+);
+
 has name_servers =>
 (
     is       => 'rw',
     isa      => ArrayRef,
     required => 0,
-    default  => sub{['1.1.1.1', '2606:4700:4700::1111', '1.0.0.1', '2606:4700:4700::1001', '8.8.8.8', '2001:4860:4860::8888', '8.8.4.4', '2001:4860:4860::8844']},
+    builder  => 1,
 );
 
 =method add_host
@@ -312,18 +323,18 @@ sub scan
     my $ports  = $self->_aref_to_str($self->ports, 'ports');
     my $fstore = $self->scan_results_file;
     my $args   = $self->_aref_to_str($self->arguments, 'args') || '';
-    my $sudo   = ($self->sudo) ? $self->_find_binary('sudo') : '';
+    my $sudo   = ($self->sudo) ? $self->_build_binary('sudo') : '';
     my $cmd    = "$sudo $binary $args -p $ports $hosts";
 
-    $self->_info('Starting masscan');
-    $self->_debug("Command: '$cmd'");
+    $self->logger->info('Starting masscan');
+    $self->logger->debug("Command: $cmd");
 
     $self->command_line($cmd);
-    $self->_error('masscan not found') && die if (!$binary || $binary !~ m{masscan$}xmi);
+    $self->logger->error('masscan not found') && die if (!$binary || $binary !~ m{masscan$}xmi);
 
-    $self->_info('Attempting to run command');
+    $self->logger->info('Attempting to run command');
     my $scan = $self->_run_cmd($cmd . " -oJ $fstore");
-    $self->_info(($scan->{success}) ? 'Command executed successfully.': "Command has failed: $scan->{stderr}");
+    $self->logger->info(($scan->{success}) ? 'Command executed successfully.': "Command has failed: $scan->{stderr}");
 
     return ($scan->{success}) ? 1 : 0;
 }
@@ -352,7 +363,7 @@ sub scan_results
     my %up_hosts;
 
     map{$up_hosts{$_->{ip}} = 1}($sres->@*);
-    $self->_info('Collating scan results');
+    $self->logger->info('Collating scan results');
 
     return {
                 masscan      => {
@@ -398,7 +409,7 @@ sub _slurp_file
     my $self = shift;
     my $path = shift;
 
-    $self->_debug("Slurping up file: '$path'");
+    $self->logger->debug("Slurping up file: $path");
 
     open(my $fh, '<', $path) || die $!;
         my $data = $self->_slurp($fh);
@@ -420,18 +431,6 @@ sub _slurp
     return (<$glob> || undef)
 }
 
-# internal method _tmp_file
-# Generates a tempoary file where results can be stored.
-#
-# Returns full path to temp file.
-sub _tmp_file
-{
-    my $self = shift;
-    my $fh   = File::Temp->new();
-
-    return $fh->filename;
-}
-
 # internal method _hosts_to_ips
 # Ensures sanity of host list & resolves domain names to their IP address.
 #
@@ -444,7 +443,7 @@ sub _hosts_to_ips
 
     for my $host ($hosts->@*)
     {
-        $self->_info("Checking '$host' sanity");
+        $self->logger->info("Checking $host sanity");
 
         if ($self->_is_valid_host($host))
         {
@@ -455,7 +454,7 @@ sub _hosts_to_ips
             else
             {
                 push(@sane_hosts, $host);
-                $self->_info("Added '$host' to scan list");
+                $self->logger->info("Added $host to scan list");
             }
         }
     }
@@ -477,11 +476,11 @@ sub _is_valid_host
 
     if (is_ipv4($test) || is_ipv6($test) || is_domain($test))
     {
-        $self->_debug("'$host' is a valid IP address or domain name");
+        $self->logger->debug("$host is a valid IP address or domain name");
         return 1;
     }
 
-    $self->_warn("'$host' is not a valid IP address or domain name");
+    $self->logger->warn("$host is not a valid IP address or domain name");
     return 0;
 }
 
@@ -497,11 +496,11 @@ sub _is_valid_port
 
     if ($port =~ m{^\d+$}xm || $port =~ m{^\d+-\d+$}xm)
     {
-        $self->_debug("'$port' is valid port number or port range");
+        $self->logger->debug("$port is valid port number or port range");
         return 1;
     }
 
-    $self->_warn("'$port' is not valid port number or port range");
+    $self->logger->warn("$port is not valid port number or port range");
     return 0;
 }
 
@@ -518,7 +517,7 @@ sub _aref_to_str
     my $type = shift;
     my $str;
 
-    $self->_info("Converting '$type' ArrayRef to masscan cli format");
+    $self->logger->info("Converting $type ArrayRef to masscan cli format");
 
     for ($type)
     {
@@ -530,7 +529,7 @@ sub _aref_to_str
     $str =~ s/,$//g;
     $str =~ s/\s+$//g;
 
-    $self->_debug("ArrayRef to masscan cli format: '$str'");
+    $self->logger->debug("ArrayRef to masscan cli format: $str");
 
     return $str;
 }
@@ -547,7 +546,7 @@ sub _from_json
     try
     {
         my $json = JSON->new->utf8->space_after->allow_nonref->convert_blessed->relaxed(1);
-        $self->_info('Converting results from JSON to Perl data structure');
+        $self->logger->info('Converting results from JSON to Perl data structure');
 
         return $json->decode($data);
     }
@@ -557,11 +556,84 @@ sub _from_json
     }
 }
 
-# internal method _find_binary
+# internal method _resolve_dns_name
+# Given a domain name this method will attempt to resolve the name to it's
+# IP(s).
+#
+# Returns ArrayRef of IP(s).
+sub _resolve_dns_name
+{
+    my $self = shift;
+    my $name = shift;
+    my @ips;
+
+    $self->logger->info("Getting IP address for $name");
+
+    try
+    {
+        my $resolver = new Net::DNS::Resolver();
+        $resolver->retry(3);
+        $resolver->tcp_timeout(4);
+        $resolver->udp_timeout(4);
+        $resolver->nameservers($self->name_servers->@*);
+        my $res = $resolver->search($name, 'A');
+
+        for my $answer ($res->answer)
+        {
+            for my $ip ($answer->address)
+            {
+                if ($answer->can('address'))
+                {
+                    push(@ips, $ip);
+                }
+            }
+        }
+    }
+    catch
+    {
+        $self->logger->warn("Could not get IP(s) for $name");
+        return [];
+    };
+
+    return \@ips;
+}
+
+# internal method _build_namer_servers
+# The default public name servers we'll be using
+#
+# Returns ArrayRef of IPs.
+sub _build_name_servers
+{
+    my $self = shift;
+    return [
+                '1.1.1.1',
+                '2606:4700:4700::1111',
+                '1.0.0.1',
+                '2606:4700:4700::1001',
+                '8.8.8.8',
+                '2001:4860:4860::8888',
+                '8.8.4.4',
+                '2001:4860:4860::8844'
+            ];
+}
+
+# internal method _tmp_file
+# Generates a tempoary file where results can be stored.
+#
+# Returns full path to temp file.
+sub _build_scan_results_file
+{
+    my $self = shift;
+    my $fh   = File::Temp->new();
+
+    return $fh->filename;
+}
+
+# internal method _build_binary
 # If masscan is within the users path then we should be able to find it.
 #
-# Returns full path to masscan binary
-sub _find_binary
+# Returns full path to binary file.
+sub _build_binary
 {
     my $self   = shift;
     my $binary = shift || 'masscan';
@@ -589,111 +661,43 @@ sub _find_binary
     }
 }
 
-# internal method _log
+# internal method _build_logger
 # Sets up logging.
 #
 # Returns logger Object.
-sub _log
+sub _build_logger
 {
     my $self = shift;
+    my $conf = ($self->verbose) ? _build_log_conf('DEBUG') : _build_log_conf('WARN');
 
-    ($self->verbose) ? Log::Log4perl->easy_init($DEBUG) : Log::Log4perl->easy_init($WARN);
+    Log::Log4perl->init(\$conf);
 
     return Log::Log4perl->get_logger(__PACKAGE__);
 }
 
-# internal method _debug
-# prints debug logs.
-sub _debug
-{
-    my $self   = shift;
-    my $msg    = shift;
-    my $logger = $self->_log;
-
-    $logger->debug(MAGENTA, '[DEBUG] ' . $msg, RESET);
-
-    return;
-}
-
-# internal method _info
-# prints info logs.
-sub _info
-{
-    my $self   = shift;
-    my $msg    = shift;
-    my $logger = $self->_log;
-
-    $logger->info(GREEN, '[INFO] ' . $msg, RESET);
-
-    return;
-}
-
-# internal method _warn
-# prints warn logs.
-sub _warn
-{
-    my $self   = shift;
-    my $msg    = shift;
-    my $logger = $self->_log;
-
-    $logger->warn(YELLOW, '[WARN] ' . $msg, RESET);
-
-    return;
-}
-
-# internal method _error
-# prints error logs.
-sub _error
-{
-    my $self   = shift;
-    my $msg    = shift;
-    my $logger = $self->_log;
-
-    $logger->warn(RED, '[ERROR] ' . $msg, RESET);
-
-    return;
-}
-
-# internal method _resolve_dns_name
-# Given a domain name this method will attempt to resolve the name to it's
-# IP(s).
+# internal method _build_log_conf
+# Our log settings.
 #
-# Returns ArrayRef of IP(s).
-sub _resolve_dns_name
+# Returns Str with log config.
+sub _build_log_conf
 {
-    my $self = shift;
-    my $name = shift;
-    my @ips;
+    my $level = shift;
 
-    $self->_info("Getting IP address for '$name'");
-
-    try
-    {
-        my $resolver = new Net::DNS::Resolver();
-        $resolver->retry(3);
-        $resolver->tcp_timeout(4);
-        $resolver->udp_timeout(4);
-        $resolver->nameservers($self->name_servers->@*);
-        my $res = $resolver->search($name, 'A');
-
-        for my $answer ($res->answer)
-        {
-            for my $ip ($answer->address)
-            {
-                if ($answer->can('address'))
-                {
-                    push(@ips, $ip);
-                }
-            }
-        }
-    }
-    catch
-    {
-        $self->_warn("Could not get IP(s) for '$name'");
-        return [];
-    };
-
-    return \@ips;
+    return <<~__LOG_CONF__
+    log4perl.logger                         = TRACE, Screen
+    log4perl.appender.Screen                = Log::Log4perl::Appender::ScreenColoredLevels::UsingMyColors
+    log4perl.appender.Screen.Threshold      = $level
+    log4perl.appender.Screen.stderr         = 0
+    log4perl.appender.Screen.utf8           = 1
+    log4perl.appender.Screen.layout         = Log::Log4perl::Layout::PatternLayout::Multiline
+    log4perl.appender.Screen.color.trace    = cyan
+    log4perl.appender.Screen.color.debug    = magenta
+    log4perl.appender.Screen.color.info     = green
+    log4perl.appender.Screen.color.warn     = yellow
+    log4perl.appender.Screen.color.error    = red
+    log4perl.appender.Screen.color.fatal    = bright_red
+    log4perl.appender.Screen.layout.ConversionPattern = %d{yyyy-MM-dd HH:mm} %M (%L) [%p] %m{indent=4} %n
+    __LOG_CONF__
 }
 
-1;
+__PACKAGE__->meta->make_immutable;
