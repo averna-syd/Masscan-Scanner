@@ -6,6 +6,7 @@ use MooseX::AttributeShortcuts;
 use MooseX::StrictConstructor;
 use MooseX::Types::Moose qw(:all);
 use MooseX::Types::Structured qw(:all);
+use Carp;
 use File::Spec;
 use File::Temp;
 use IPC::Open3;
@@ -333,11 +334,19 @@ sub scan
     $self->logger->debug("Command: $cmd");
 
     $self->command_line($cmd);
-    $self->logger->error('masscan not found') && die if (!$binary || $binary !~ m{masscan$}xmi);
+    $self->logger->error('masscan not found') && croak if (!$binary || $binary !~ m{masscan$}xmi);
 
     $self->logger->info('Attempting to run command');
     my $scan = $self->_run_cmd($cmd . " -oJ $fstore");
-    $self->logger->info(($scan->{success}) ? 'Command executed successfully.': "Command has failed: $scan->{stderr}");
+
+    if ($scan->{success})
+    {
+        $self->logger->info('Command executed successfully');
+    }
+    else
+    {
+        croak $self->logger->error("Command has failed: $scan->{stderr} " . 'Ensure root or sudo permissions');
+    }
 
     return ($scan->{success}) ? 1 : 0;
 }
