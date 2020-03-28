@@ -43,6 +43,9 @@ use namespace::autoclean;
     $mas->add_port('3000-65535');
 
     # Can add domains but will incur a performance penalty hence IP(s) and CIDR(s) recommended.
+    # When a domain is added to the list of hosts to be scanned this module will attempt to
+    # resolve all of the A records for the domain name provided and then add the IP(s) to the
+    # scan list.
     $mas->add_host('averna.id.au');
     $mas->add_host('duckduckgo.com');
 
@@ -70,7 +73,7 @@ use namespace::autoclean;
     $mas->binary('/usr/bin/masscan');
 
     # Set the name servers to be used for DNS resolution
-    # Default is to use a list of public DNS servers
+    # Default is to use a list of public DNS servers.
     $mas->name_servers(['192.168.0.100', '192.168.0.101']);
 
     # Will initiate the masscan.
@@ -432,7 +435,7 @@ sub _slurp
 }
 
 # internal method _hosts_to_ips
-# Ensures sanity of host list & resolves domain names to their IP address.
+# Ensures sanity of host list & resolves domain names to their IP addresses.
 #
 # Returns ArrayRef of valid Ip(s) which will be accepted by masscan.
 sub _hosts_to_ips
@@ -449,7 +452,8 @@ sub _hosts_to_ips
         {
             if (is_domain($host))
             {
-                push(@sane_hosts, $self->_resolve_dns_name($host)->[0]);
+                my $ips = $self->_resolve_dns($host);
+                map{push(@sane_hosts, $_)}($ips->@*);
             }
             else
             {
@@ -556,12 +560,12 @@ sub _from_json
     }
 }
 
-# internal method _resolve_dns_name
+# internal method _resolve_dns
 # Given a domain name this method will attempt to resolve the name to it's
 # IP(s).
 #
 # Returns ArrayRef of IP(s).
-sub _resolve_dns_name
+sub _resolve_dns
 {
     my $self = shift;
     my $name = shift;
