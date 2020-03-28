@@ -334,7 +334,7 @@ sub scan
     $self->logger->debug("Command: $cmd");
 
     $self->command_line($cmd);
-    $self->logger->error('masscan not found') && croak if (!$binary || $binary !~ m{masscan$}xmi);
+    $self->logger->fatal('masscan not found') && croak if (!$binary || $binary !~ m{masscan$}xmi);
 
     $self->logger->info('Attempting to run command');
     my $scan = $self->_run_cmd($cmd . " -oJ $fstore");
@@ -345,7 +345,7 @@ sub scan
     }
     else
     {
-        croak $self->logger->error("Command has failed: $scan->{stderr} " . 'Ensure root or sudo permissions');
+        $self->logger->error("Command has failed: $scan->{stderr} " . 'Ensure root or sudo permissions');
     }
 
     return ($scan->{success}) ? 1 : 0;
@@ -373,6 +373,8 @@ sub scan_results
     my $cmd  = $self->command_line;
     my $sres = $self->_from_json($self->_slurp_file($self->scan_results_file));
     my %up_hosts;
+
+    $self->logger->warn("No results") if (!$sres);
 
     map{$up_hosts{$_->{ip}} = 1}($sres->@*);
     $self->logger->info('Collating scan results');
@@ -423,11 +425,19 @@ sub _slurp_file
 
     $self->logger->debug("Slurping up file: $path");
 
-    open(my $fh, '<', $path) || die $!;
-        my $data = $self->_slurp($fh);
-    close($fh);
+    try
+    {
+        open(my $fh, '<', $path) || die $!;
+            my $data = $self->_slurp($fh);
+        close($fh);
 
-    return $data;
+        return $data;
+    }
+    catch
+    {
+        $self->logger->warn("$!. " . 'Most likely scan was not successful.');
+        return;
+    }
 }
 
 # internal method _slurp
