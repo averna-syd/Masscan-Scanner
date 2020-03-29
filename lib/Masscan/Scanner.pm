@@ -1,6 +1,7 @@
 package Masscan::Scanner;
 use strict;
 use warnings;
+use v5.20;
 use Moose;
 use MooseX::AttributeShortcuts;
 use MooseX::StrictConstructor;
